@@ -1,0 +1,189 @@
+---
+title: "Conceptual generics"
+output: html_notebook
+---
+
+```{r}
+library(rwebppl)
+library(jsonlite)
+```
+
+## Habituals style model
+
+Different kinds of individuals, with different rates.
+
+Now, state prior carries around information about the kind of individual.
+
+```{r}
+priorModel <- '
+var snap = function(x){
+  return Math.floor(x*4)/4
+}
+
+var withinKind = function(typesOfIndividuals, rates){
+
+  var individualType = categorical({ps: typesOfIndividuals.ps, vs: typesOfIndividuals.vs});
+  var rate = gaussian(rates[individualType][0])
+
+  return {i_type: individualType, i_rate: snap(rate)}
+}
+
+var statePrior = Infer(
+  {method: "forward", samples: 10000}, 
+  function(){ withinKind(params.typesOfInidividuals, params.rates)}
+)
+statePrior
+'
+
+parameters = list(
+  typesOfInidividuals = list(ps = c(3, 2, 1), vs = c("x0", "x1", "x2")),
+  rates = list(x0 = data.frame(mu = -10, sigma = 2),
+               x1 = data.frame(mu = -4, sigma = 3),
+               x2 = data.frame(mu = -1, sigma = 1)
+               ))
+
+
+rs <- get_samples(webppl(priorModel,
+       data = parameters,
+       data_var = "params"), 10000)
+
+ggplot(rs, aes( x = i_rate, fill = i_type))+
+  geom_histogram(position = position_dodge())
+
+```
+
+RSA model as before, but giving joint posterior over rate and kind of individual
+
+```{r}
+rsaModel <-'
+var alpha_1 = 5;
+var alpha_2 = 1;
+
+var utterances = ["generic", "silence"];
+
+var thresholdBins = map(function(x){
+  return x - 0.125;
+}, _.pluck(statePrior.support(), "i_rate"));
+// console.log(_.max(thresholdBins))
+var thresholdPrior = function() { return uniformDraw(thresholdBins) };
+var utterancePrior = function() { return uniformDraw(utterances) }
+
+var meaning = function(utterance, state, threshold) {
+  return (utterance == "generic") ? state > threshold : true
+}
+
+var literalListener = cache(function(utterance, threshold) {
+  Infer({method: "enumerate"}, function(){
+    var state = sample(statePrior)
+    var prevalence = state.i_rate;
+
+    var m = meaning(utterance, prevalence, threshold)
+    condition(m)
+    return prevalence
+  })
+})
+
+var speaker1 = cache(function(prevalence, threshold) {
+  Infer({method: "enumerate"}, function(){
+    var utterance = utterancePrior()
+    var L0 = literalListener(utterance, threshold)
+    factor( alpha_1*L0.score(prevalence) )
+    return utterance
+  })
+})
+
+var pragmaticListener = function(utterance) {
+  Infer({method: "enumerate"}, function(){
+    var state = sample(statePrior)
+    var prevalence = state.i_rate;
+    var threshold = thresholdPrior();
+    console.log("state = " + prevalence);
+    console.log("threshold = " + threshold);
+    var S1 = speaker1(prevalence, threshold)
+    observe(S1, utterance)
+    return state
+  })
+}
+
+pragmaticListener("generic")
+'
+```
+
+
+```{r}
+parameters = list(
+  typesOfInidividuals = list(ps = c(3, 2, 1), vs = c("x0", "x1", "x2")),
+  rates = list(x0 = data.frame(mu = -10, sigma = 2),
+               x1 = data.frame(mu = -4, sigma = 3),
+               x2 = data.frame(mu = -1, sigma = 1)
+               ))
+
+
+rs <- webppl(paste(priorModel, rsaModel, sep = '\n'),
+       data = parameters,
+       data_var = "params")
+
+rs %>%
+  group_by(i_type) %>%
+  summarize(prob = sum(prob))
+
+```
+
+
+## Generics style models
+
+```{r}
+priorModel <- '
+var shapeParameters = function(g, d){
+    var shape_alpha =  g * d
+    var shape_beta = (1-g) * d
+    return {a: shape_alpha, b: shape_beta}
+}
+// unpack parameters
+var mixture = params.mix // e.g. [0.7, 0.3]
+var g1 = params.c1.g[0], d1 = params.c1.d[0], g0 = params.c0.g[0], d0 = params.c0.d[0]
+var shape0 = shapeParameters(g0, d0), shape1 = shapeParameters(g1, d1)
+var componentParameters = [shape0, shape1];
+
+var logNormal = function(params){
+  var mu = params.mu, sigma = params.sigma
+  return Math.log(gaussian(mu, sigma));
+};
+
+var withinKind = function(typesOfIndividuals, rates){
+  var individualType = categorical({ps: typesOfIndividuals.ps, vs: typesOfIndividuals.vs});
+  var rate = logNormal(rates[individualType])
+  return {i_type: individualType, i_rate: rate}
+}
+
+var generateKind = function(prevalence, rate, rateVar){
+  flip(prevalence) ? 
+    logNormal(rate, rateVar) : 
+
+}
+
+var priorModel = function(){
+
+    var distParams = categorical({ps: mixture, vs:componentParameters});
+    var prevalence = beta(distParams.a, distParams.b)
+
+    return {prevalence: prevalence}
+}
+'
+```
+
+```{r}
+
+priorParameters <- list(mix = c(0.7, 0.3),
+                      c1 = list(g = 0.9, d = 10),
+                      c0 = list(g = 0.05, d = 4))
+
+
+rs <- webppl(priorModel, 
+       inference_opts = list(method = "forward", samples = 10000),
+       model_var = "priorModel", 
+       data = priorParameters,
+       data_var = "params",
+       output_format = "samples")
+```
+
