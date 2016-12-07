@@ -1,0 +1,129 @@
+# Infinite relational model
+
+Translated from [forest model](http://forestdb.org/models/irm.html), from [Kemp et al. (2006)](http://www.psy.cmu.edu/~ckemp/papers/KempTGYU06.pdf)
+
+~~~~
+var pickStick = function(sticks, J) {
+  return flip(sticks(J)) ? J : pickStick(sticks, J+1);
+};
+
+var makeSticks = function(alpha) {
+  var sticks = mem(function(index) {return beta(1, alpha)});
+  return function() {
+    return pickStick(sticks,1)
+  };
+}
+
+var DPmem = function(alpha, baseDist) {
+  var augmentedProc = mem(function(args, stickIndex) {return apply(baseDist, args)});
+  var DP = mem(function(args) {return makeSticks(alpha)});
+  return function(argsin) {
+    var stickIndex = DP(argsin)()
+    return augmentedProc(argsin, stickIndex);
+  }
+}
+
+var uuid = function() {
+  var s4 = function() {
+    return (Math.floor((1 + Math.random()) * 0x10000)
+            .toString(16)
+            .substring(1));
+  }
+  return s4() + s4() + '-' + s4() + '-' + s4() + '-' +
+    s4() + '-' + s4() + s4() + s4();
+}
+
+var data = [
+  ["tom","fred",true],
+  ["tom","jim",true],
+  ["jim","fred",true],
+  ["mary","fred",false],
+  ["mary","jim",false],
+  ["sue","fred",false],
+  ["ann","jim",false],
+  ["ann","tom",false],
+  ["mary","sue",true],
+  ["mary","ann",true],
+  ["ann","sue",true]
+]
+
+var model = function(){
+  var classDistribution = DPmem(1, uuid);
+  var object_to_class = mem(function(object){ return classDistribution() });
+  var class_to_params = mem(function(class1, class2){ beta (0.5, 0.5 )} );
+
+  var obsFn = function(lst){
+    var obj1 = lst[0], obj2 = lst[1], val = lst[2];
+    observe(
+      Bernoulli({p: class_to_params(object_to_class(obj1), object_to_class(obj2))}),
+      val)
+  }
+
+  mapData({data}, obsFn);
+
+  return {
+    tomFred: object_to_class("tom") === object_to_class("fred"),
+    tomMary: object_to_class("tom") === object_to_class("mary")
+  }
+}
+
+var samples = 10000;
+var burn = samples / 2;
+var method = "MCMC"
+
+viz.marginals(
+  Infer({model, method, samples, burn})
+)
+~~~~
+
+## With a finite number of categories
+
+~~~~
+var data = [
+  ["tom","fred",true],
+  ["tom","jim",true],
+  ["jim","fred",true],
+  ["mary","fred",false],
+  ["mary","jim",false],
+  ["sue","fred",false],
+  ["ann","jim",false],
+  ["ann","tom",false],
+  ["mary","sue",true],
+  ["mary","ann",true],
+  ["ann","sue",true]
+]
+
+var model = function(){
+
+  var numCategories = 1 + poisson(1);
+  var categories = map(function(i) {return 'c_' + i;}, _.range(numCategories));
+  var object_category = mem(function(object){ return uniformDraw( categories) });
+  var categories_relationParams = mem(function(class1, class2){ beta (0.5, 0.5 )} );
+
+  var obsFn = function(lst){
+    var obj1 = lst[0], obj2 = lst[1], val = lst[2];
+    observe(
+      Bernoulli({
+        p: categories_relationParams(
+          object_category(obj1), object_category(obj2)
+        )}),
+      val)
+  }
+
+  mapData({data}, obsFn);
+
+  return {
+    tomFred: object_category("tom") === object_category("fred"),
+    tomMary: object_category("tom") === object_category("mary"),
+    numCategories
+  }
+}
+
+var samples = 5000;
+var burn = samples / 2;
+var method = "MCMC"
+
+viz.marginals(
+  Infer({model, method, samples, burn})
+)
+~~~~
