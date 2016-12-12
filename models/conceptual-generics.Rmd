@@ -64,7 +64,7 @@ var utterances = ["generic", "silence"];
 var thresholdBins = map(function(x){
   return x - 0.125;
 }, _.pluck(statePrior.support(), "i_rate"));
-// console.log(_.max(thresholdBins))
+
 var thresholdPrior = function() { return uniformDraw(thresholdBins) };
 var utterancePrior = function() { return uniformDraw(utterances) }
 
@@ -76,7 +76,6 @@ var literalListener = cache(function(utterance, threshold) {
   Infer({method: "enumerate"}, function(){
     var state = sample(statePrior)
     var prevalence = state.i_rate;
-
     var m = meaning(utterance, prevalence, threshold)
     condition(m)
     return prevalence
